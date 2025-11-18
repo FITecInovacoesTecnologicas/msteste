@@ -24,7 +24,7 @@ jobs:
       - name: Deploy with Helm
         run: |
           helm upgrade --install msteste ./helm \
-            --set project.image=ghcr.io/${{ github.repository }}/msteste:latest \
+            --set project.image=ghcr.io/$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')/msteste:latest \
             --set rabbitmq.username=${{ secrets.RABBITMQ_USERNAME }} \
             --set rabbitmq.password=${{ secrets.RABBITMQ_PASSWORD }} \
             --set rabbitmq.vhost=${{ secrets.RABBITMQ_VIRTUAL_HOST }}
