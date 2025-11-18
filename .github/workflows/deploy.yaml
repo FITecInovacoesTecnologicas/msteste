@@ -6,6 +6,11 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -19,10 +24,77 @@ jobs:
           version: latest
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Configure Kubeconfig
+#      - name: Configure Kubeconfig
+#        run: |
+#          mkdir -p ~/.kube
+#          echo "${{ secrets.AWS_KUBECONFIG }}" > ~/.kube/config
+
+      # 2. Instalar AWS CLI
+      - name: Install AWS CLI
         run: |
-          mkdir -p ~/.kube
-          echo "${{ secrets.AWS_KUBECONFIG }}" > ~/.kube/config
+          sudo apt-get update
+          sudo apt-get install -y awscli jq
+
+      # 3. Obter ACCOUNT_ID
+      - name: Get AWS Account ID
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text)
+          echo "ACCOUNT_ID=$ACCOUNT_ID" >> $GITHUB_ENV
+          echo "AWS Account ID: $ACCOUNT_ID"
+
+      # 4. Listar clusters EKS
+      - name: List EKS clusters
+        run: |
+          aws eks list-clusters --region us-east-1
+          # Ajuste manualmente o CLUSTER_NAME abaixo ou use o primeiro da lista
+          CLUSTER_NAME=$(aws eks list-clusters --region us-east-1 --query "clusters[0]" --output text)
+          echo "CLUSTER_NAME=$CLUSTER_NAME" >> $GITHUB_ENV
+          echo "Cluster Name: $CLUSTER_NAME"
+
+      # 5. Criar Role OIDC (se não existir)
+      - name: Create OIDC Role for GitHub Actions
+        run: |
+          ROLE_NAME="GitHubOIDCRole"
+          TRUST_POLICY=$(cat <<EOF
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+             {
+               "Effect": "Allow",
+               "Principal": {
+                  "Federated": "arn:aws:iam::$ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com"
+               },
+               "Action": "sts:AssumeRoleWithWebIdentity",
+               "Condition": {
+                  "StringEquals": {
+                     "token.actions.githubusercontent.com:sub": "repo:<ORG>/<REPO>:ref:refs/heads/main"
+                  }
+               }
+             }
+            ]
+          }
+          EOF
+          )
+          echo "$TRUST_POLICY" > trust-policy.json
+          aws iam create-role --role-name $ROLE_NAME --assume-role-policy-document file://trust-policy.json || echo "Role already exists"
+          aws iam attach-role-policy --role-name $ROLE_NAME --policy-arn arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+          aws iam attach-role-policy --role-name $ROLE_NAME --policy-arn arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+          aws iam attach-role-policy --role-name $ROLE_NAME --policy-arn arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+          ROLE_ARN="arn:aws:iam::$ACCOUNT_ID:role/$ROLE_NAME"
+          echo "OIDC_ROLE=$ROLE_ARN" >> $GITHUB_ENV
+          echo "OIDC Role ARN: $ROLE_ARN"
+
+      # 6. Configurar credenciais AWS via OIDC
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.OIDC_ROLE }}
+          aws-region: us-east-1
+
+      # 7. Atualizar kubeconfig para acessar EKS
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --name ${{ env.CLUSTER_NAME }} --region us-east-1
 
       - name: Deploy with Helm
         run: |
