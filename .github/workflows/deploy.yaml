@@ -30,10 +30,11 @@ jobs:
 #          echo "${{ secrets.AWS_KUBECONFIG }}" > ~/.kube/config
 
       # 2. Instalar AWS CLI
-      - name: Install AWS CLI
+      - name: Install AWS CLI v2
         run: |
-          sudo apt-get update
-          sudo apt-get install -y awscli jq
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip awscliv2.zip
+          sudo ./aws/instal
 
       # 3. Obter ACCOUNT_ID
       - name: Get AWS Account ID
